@@ -1058,6 +1058,17 @@ kernel_em_cv <- function(y,
 
 Finally, we have the function that performs cross validation over a grid of parameter values, where $h_{\mu}$ and $h_{\pi}$ vary, and $h_{\Sigma}$ is a fixed value.
 
+
+Let's first add the packages we used to make CV run in parallel:
+
+```{r}
+usethis::use_package("foreach")
+usethis::use_package("doParallel")
+usethis::use_package("parallel")
+usethis::use_import_from("foreach", c("foreach", "%dopar%"))
+```
+
+
 ```{r}
 #' Grid Search Cross-Validation for Kernel EM Model
 #'
@@ -1274,26 +1285,17 @@ cv_grid_search <- function(y,
 }
 ```
 
-Let's add the packages we used to make CV run in parallel:
-
-```{r}
-usethis::use_package("foreach")
-usethis::use_package("doParallel")
-usethis::use_package("parallel")
-
-```
-
 
 Let us try running this on our example data, using sequential processing. To run in parallel, we would choose a value of `ncores` greater than 1.
 
-```{r}
+```{r, message = FALSE}
 ex1_cv_log_grid_results <- cv_grid_search(y = ex1$dat$y, K = 2, hSigma = 10, biomass = ex1$dat$biomass,
                                           leave_out_every = 5, grid_size = 10, ncores = 1)
 ```
 
 
 We can examine the cross-validation scores for each set of parameter values by calling the following:
-```{r, message = FALSE}
+```{r}
 ex1_cv_log_grid_results$results
 ```
 
