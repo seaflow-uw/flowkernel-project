@@ -60,5 +60,6 @@ Let's include some package-level documentation. Besides being user-friendly, it'
 #' 
 #' @docType package
 #' @import mclust
+#' @import foreach
 ```
 

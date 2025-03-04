@@ -4,6 +4,7 @@
 #' 
 #' @docType package
 #' @import mclust
+#' @import foreach
 #' @keywords internal
 "_PACKAGE"
 

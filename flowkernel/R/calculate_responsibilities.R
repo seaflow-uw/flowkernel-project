@@ -5,6 +5,7 @@
 #' @param mu a T-by-K-by-d array of means
 #' @param Sigma a T-K-by-d-by-d array of covariance matrices
 #' @param pi a T-by-K vector of probabilities
+#' @export
 calculate_responsibilities <- function(y, mu, Sigma, pi){
   resp <- list() # responsibilities gamma[[t]][i, k]
   log_resp <- list() # log of responsibilities
