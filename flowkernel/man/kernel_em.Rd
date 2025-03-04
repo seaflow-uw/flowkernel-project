@@ -2,7 +2,7 @@
 % Please edit documentation in _main.Rmd.
 \name{kernel_em}
 \alias{kernel_em}
-\title{A Kernel-smoothed EM algorithm for a mixture of Gaussians that changes over time. The larger any of the three bandwidths are, the smoother the corresponding parameter will vary.}
+\title{A Kernel-smoothed EM algorithm that fits a mixture of Gaussians that evolves over time. The larger any of the three bandwidths are, the smoother the corresponding parameter will vary.}
 \usage{
 kernel_em(
   y,
@@ -10,6 +10,7 @@ kernel_em(
   hmu,
   hSigma,
   hpi,
+  dates = NULL,
   num_iter = 10,
   biomass = default_biomass(y),
   initial_fit = init_const(y, K, 50, 50)
@@ -18,13 +19,15 @@ kernel_em(
 \arguments{
 \item{y}{length T list with \code{y[[t]]} being a n_t-by-d matrix}
 
-\item{K}{number of components}
+\item{K}{number of clusters/populations}
 
 \item{hmu}{bandwidth for mu parameter}
 
 \item{hSigma}{bandwidth for Sigma parameter}
 
 \item{hpi}{bandwidth for pi parameter}
+
+\item{dates}{A vector of POSIXct (or POSIXt) date-time objects of length T, where each element represents the timestamp corresponding to the t-th observation. If provided, these dates are converted to numeric values and rescaled (by dividing by 3600) for time-based smoothing operations. If omitted, the function defaults to using the sequence of observation indices.}
 
 \item{num_iter}{number of iterations of EM to perform}
 

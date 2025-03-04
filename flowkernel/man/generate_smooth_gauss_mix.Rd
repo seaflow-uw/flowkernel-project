@@ -4,7 +4,13 @@
 \alias{generate_smooth_gauss_mix}
 \title{Generate data from smoothly-varying mixture of Gaussians model}
 \usage{
-generate_smooth_gauss_mix(mu_function, Sigma_function, pi_function, num_points)
+generate_smooth_gauss_mix(
+  mu_function,
+  Sigma_function,
+  pi_function,
+  num_points,
+  start_date = "2017-05-28 21:00:00 UTC"
+)
 }
 \arguments{
 \item{mu_function}{a function that maps a vector of times to a T-by-K-by-d
@@ -18,6 +24,8 @@ of probabilities}
 
 \item{num_points}{a T vector of integers giving the number of points n_t to
 generate at each time point t.}
+
+\item{start_date}{the starting date for the generated data. This is created for when running a test requires dates.}
 }
 \description{
 The smoothly-varying mixture of Gaussians model is defined as follows:

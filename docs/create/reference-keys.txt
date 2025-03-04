@@ -18,4 +18,5 @@ m-step-pi-1
 m-step-mu-1
 m-step-sigma-1
 trying-out-the-method
+cross-validation
 conclude

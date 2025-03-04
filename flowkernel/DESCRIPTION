@@ -12,18 +12,21 @@ Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.1
 Imports: 
+    doParallel,
     dplyr,
+    foreach,
     ggplot2,
     grDevices,
     magrittr,
     matrixStats,
     mclust,
     mvtnorm,
+    parallel,
     plotly,
     purrr,
     rlang,
     stats,
     tibble,
     tidyr
-LitrVersionUsed: 0.9.2
-LitrId: d388624c4628e60e4059b97948426561
+LitrVersionUsed: 0.9.3
+LitrId: 70e8a39e6f470326f564d8299825308e

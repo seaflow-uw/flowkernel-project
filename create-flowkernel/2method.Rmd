@@ -5,31 +5,36 @@ Given a kernel $w_h(t)$ with bandwidth $h$, we will be considering the following
 Here’s a high-level look at the algorithm. We’ll discuss the initialization, E-step, and M-step in the next subsections.
 
 ```{r}
-#' A Kernel-smoothed EM algorithm for a mixture of Gaussians that changes over time. The larger any of the three bandwidths are, the smoother the corresponding parameter will vary. 
+#' A Kernel-smoothed EM algorithm that fits a mixture of Gaussians that evolves over time. The larger any of the three bandwidths are, the smoother the corresponding parameter will vary. 
 #' 
 #' Element t in the list `y`, `y[[t]]`, is an n_t-by-d matrix with the coordinates of every point (or bin) at time t given in each row. `biomass[[t]]` is a numeric vector of length n_t, where the ith entry of the vector is the biomass for the bin whose coordinates are given in the ith row of `y[[t]]`. 
 #' 
 #' The initial_fit parameter is a list of initial parameter values that is generated from the initialization functions in the package. It contains initial values at all times for mu, Sigma, and pi, as well as estimates for the responsibilities and cluster membership. Currently, for our cluster membership estimates (z estimate - zest), each bin is assigned to the cluster that is most responsible for it.
 #' 
 <<y-param>>
-#' @param K number of components
+#' @param K number of clusters/populations
 #' @param hmu bandwidth for mu parameter
 #' @param hSigma bandwidth for Sigma parameter
 #' @param hpi bandwidth for pi parameter
+#' @param dates A vector of POSIXct (or POSIXt) date-time objects of length T, where each element represents the timestamp corresponding to the t-th observation. If provided, these dates are converted to numeric values and rescaled (by dividing by 3600) for time-based smoothing operations. If omitted, the function defaults to using the sequence of observation indices.
 #' @param num_iter number of iterations of EM to perform
 #' @param biomass list of length T, where each element `biomass[[t]]` is a 
 #' numeric vector of length n_t containing the biomass (or count) of particles 
 #' in each bin
 #' @param initial_fit a list of starting values for the parameters, responsibilities, and estimated cluster assignments
 #' @export
-kernel_em <- function (y, K, hmu, hSigma, hpi, num_iter = 10, 
-                       biomass = default_biomass(y),
-                       initial_fit = init_const(y, K, 50, 50)) {
+kernel_em <- function (y, K, hmu, hSigma, hpi, dates = NULL, num_iter = 10, 
+                             biomass = default_biomass(y),
+                             initial_fit = init_const(y, K, 50, 50)) {
   num_times <- length(y)
   d <- ncol(y[[1]])
   mu <- initial_fit$mu
   Sigma <- initial_fit$Sigma
   pi <- initial_fit$pi
+  if (!is.null(dates)){
+    numeric_dates <- as.numeric(dates)
+    rescaled_dates <- (numeric_dates - min(numeric_dates)) / 3600
+  }
   for (l in seq(num_iter)) {
     <<E-step>>
     <<M-step>>
@@ -169,15 +174,21 @@ $$
 ```{r M-step-pi, eval=FALSE}
   # do summations over i:
   #form T-by-K matrix summing resp_itk over i
-resp_sum <- purrr::map(resp_weighted, ~ colSums(.x)) %>%
+  resp_sum <- purrr::map(resp_weighted, ~ colSums(.x)) %>%
       unlist() %>%
       matrix(ncol = K, byrow = TRUE)
-
-resp_sum_smooth <- apply(
-  resp_sum, 2, function(x) 
-    stats::ksmooth(1:length(x), x, bandwidth = hpi, x.points = 1:length(x))$y
-)
-pi <- resp_sum_smooth / rowSums(resp_sum_smooth)
+  if (is.null(dates)){
+      resp_sum_smooth <- apply(
+        resp_sum, 2, function(x)
+          stats::ksmooth(1:length(x), x, bandwidth = hpi, x.points = 1:length(x))$y
+      )
+  } else {
+      resp_sum_smooth <- apply(
+        resp_sum, 2, function(x) 
+          stats::ksmooth(rescaled_dates, x, bandwidth = hpi, x.points = rescaled_dates)$y
+      )
+    }
+  pi <- resp_sum_smooth / rowSums(resp_sum_smooth)
 ```
 
 Here is an example that demonstrates how the `ksmooth()` function works:
@@ -205,23 +216,33 @@ $$
 
 ```{r M-step-mu, eval=FALSE}
   # form T-by-K-by-d array summing resp_itk * Y_ij over i
-y_sum <- purrr::map2(resp_weighted, y, ~ crossprod(.x, .y)) %>% 
+    y_sum <- purrr::map2(resp_weighted, y, ~ crossprod(.x, .y)) %>% 
       unlist() %>% 
       array(c(K, d, num_times)) %>% 
       aperm(c(3,1,2))
 
-y_sum_smoothed <- apply(
-      y_sum, 2:3, function(x) 
-      stats::ksmooth(1:length(x), x, bandwidth = hmu, x.points = 1:length(x))$y
-)
-resp_sum_smooth_mu <- apply(
-      resp_sum, 2, function(x) 
-      stats::ksmooth(1:length(x), x, bandwidth = hmu, x.points = 1:length(x))$y
-)
-
-for (j in seq(d)) {
-  mu[, , j] <- y_sum_smoothed[, , j] / resp_sum_smooth_mu
-}
+    if (is.null(dates)){
+      y_sum_smoothed <- apply(
+        y_sum, 2:3, function(x)
+          stats::ksmooth(1:length(x), x, bandwidth = hmu, x.points = 1:length(x))$y
+      )
+      resp_sum_smooth_mu <- apply(
+        resp_sum, 2, function(x)
+          stats::ksmooth(1:length(x), x, bandwidth = hmu, x.points = 1:length(x))$y
+      )
+    } else {
+      y_sum_smoothed <- apply(
+        y_sum, 2:3, function(x) 
+          stats::ksmooth(rescaled_dates, x, bandwidth = hmu, x.points = rescaled_dates)$y
+      )
+      resp_sum_smooth_mu <- apply(
+        resp_sum, 2, function(x) 
+          stats::ksmooth(rescaled_dates, x, bandwidth = hmu, x.points = rescaled_dates)$y
+      )
+    }
+    for (j in seq(d)) {
+      mu[, , j] <- y_sum_smoothed[, , j] / resp_sum_smooth_mu
+    }
 ```
 
 In the above code for `y_sum`, I convert a list of length $T$, where each list element is a $K\times d$ matrix, to a $T\times K\times d$ array.  To verify that this conversion is done correctly, I tried this small example:
@@ -249,25 +270,38 @@ $$
 ```{r M-step-Sigma, eval=FALSE}
   # form a T-by-K-by-d-by-d array
   # summing (Y_it - mu_t)*diag(resp_itk)*(Y_it - mu_t)^T over i
-mat_sum <- array(NA, c(num_times, K, d, d))
+    mat_sum <- array(NA, c(num_times, K, d, d))
     for (tt in seq(num_times)) {
       yy <- matrix(NA, dim(y[[tt]])[1], d)
       for (k in seq(K)) {
         for(dd in seq(d)) {
-          #yy [,dd] <- (y[[tt]][, dd]- mu_sig[tt, k, dd])
-          yy [,dd] <- (y[[tt]][, dd]- mu[tt, k, dd])
+          yy [,dd] <- (y[[tt]][, dd] - mu[tt, k, dd])
         }
-          mat_sum[tt, k, , ] <- crossprod(yy, yy * resp_weighted[[tt]][, k]) # YY^T * D * YY
-        }
+        mat_sum[tt, k, , ] <- crossprod(yy, yy * resp_weighted[[tt]][, k]) 
       }
-    mat_sum_smoothed <- apply(
-      mat_sum, 2:4, function(x)
-        stats::ksmooth(1:length(x), x, bandwidth = hSigma, x.points = 1:length(x))$y
-    )
-    resp_sum_smooth_Sigma <- apply(
-      resp_sum, 2, function(x) 
-        stats::ksmooth(1:length(x), x, bandwidth = hSigma, x.points = 1:length(x))$y
-    )
+    }
+    if (is.null(dates)){
+      mat_sum_smoothed <- apply(
+        mat_sum, 2:4, function(x)
+          stats::ksmooth(1:length(x), x, bandwidth = hSigma, x.points = 1:length(x))$y
+      )
+      resp_sum_smooth_Sigma <- apply(
+        resp_sum, 2, function(x)
+          stats::ksmooth(1:length(x), x, bandwidth = hSigma, x.points = 1:length(x))$y
+      )
+    } else {
+      mat_sum_smoothed <- apply(
+        mat_sum, 2:4, function(x)
+          stats::ksmooth(rescaled_dates, x, bandwidth = hSigma, x.points = rescaled_dates)$y
+      )
+      
+      resp_sum_smooth_Sigma <- apply(
+        resp_sum, 2, function(x) 
+          stats::ksmooth(rescaled_dates, x, bandwidth = hSigma, x.points = rescaled_dates)$y
+      )
+    }
+    
+    
     for (j in seq(d))
       for (l in seq(d))
         Sigma[, , j, l] <- mat_sum_smoothed[, , j, l] / resp_sum_smooth_Sigma
@@ -280,6 +314,7 @@ First, we begin with a function that creates a "default biomass" for data that i
 ```{r}
 #' Creates a biomass list of length T, where each element `biomass[[t]]` is a numeric vector of length n_t containing just 1's. 
 <<y-param>>
+#' @export
 default_biomass <- function(y) { 
   biomasslist <- vector("list", length(y))
   for (i in 1:length(y)) {
@@ -309,24 +344,24 @@ init_const <- function (y, K, times_to_sample = 50, points_to_sample = 50){
   mu <- array(NA, c(num_times, K, d))
   Sigma <- array(NA, c(num_times, K, d, d))
   pi <- matrix(NA, num_times, K)
-  
-  # subsample data:
-  times_to_sample <- sample(num_times, times_to_sample, replace=TRUE)
-  if (d == 1) {
-    sample_data <- y[times_to_sample] %>%
-      purrr::map(~ .x[sample(nrow(.x), points_to_sample, replace=TRUE)]) %>% 
-      unlist()
-  }
-  else {
-    sample_data <- y[times_to_sample] %>%
-      purrr::map(~ t(.x[sample(nrow(.x), points_to_sample, replace=TRUE), ])) %>% 
-      unlist() %>% 
-      matrix(ncol = d, byrow = TRUE)
-  }
-  
   # Repeatedly call Mclust until it gives a non-NULL fit:
   init_fit <- NULL
   while (is.null(init_fit)) {
+    # subsample data:
+    times_to_sample <- sample(num_times, times_to_sample, replace=TRUE)
+    if (d == 1) {
+      sample_data <- y[times_to_sample] %>%
+        purrr::map(~ .x[sample(nrow(.x), points_to_sample, replace=TRUE)]) %>% 
+        unlist()
+    }
+    else {
+      sample_data <- y[times_to_sample] %>%
+        purrr::map(~ t(.x[sample(nrow(.x), points_to_sample, replace=TRUE), ])) %>% 
+        unlist() %>% 
+        matrix(ncol = d, byrow = TRUE)
+    }
+    
+    
     if (d == 1) {
       init_fit <- mclust::Mclust(sample_data, G = K, modelNames = "V")
       for (tt in seq(num_times)) {
@@ -336,10 +371,12 @@ init_const <- function (y, K, times_to_sample = 50, points_to_sample = 50){
       }
     } else if (d > 1) {
       init_fit <- mclust::Mclust(sample_data, G = K, modelNames = "VVV")
-      for (tt in seq(num_times)) {
-        mu[tt, ,] <- t(init_fit$parameters$mean)
-        pi[tt, ] <- init_fit$parameters$pro
-        Sigma[tt, , , ] <- aperm(init_fit$parameters$variance$sigma, c(3,1,2))
+      if (is.matrix(init_fit$parameters$mean)){
+        for (tt in seq(num_times)) {
+          mu[tt, ,] <- t(init_fit$parameters$mean)
+          pi[tt, ] <- init_fit$parameters$pro
+          Sigma[tt, , , ] <- aperm(init_fit$parameters$variance$sigma, c(3,1,2))
+        }
       }
     }
   }
@@ -720,4 +757,612 @@ plot_data_and_model(ex2$dat$y, fit$zest, fit$mu, dim = 1, show_data = FALSE)
 
 They look pretty similar! The algorithm is able to make up the difference between the cheap constant initialization and the improved Bayesian initialization, at least in this simple case.
 
+## Cross-Validation
+
+We use cross validation to help with the selection of our bandwidths for the kernel smoother, implementing a 5-fold cross-validation scheme where each fold $\mathcal{I}_1, \mathcal{I}_2, \mathcal{I}_3, \mathcal{I}_4, \mathcal{I}_5$ constitutes every 5th time point, so $\mathcal{I}_\ell = \{\ell, \ell + 5, \ell + 10, \dots\}$.
+
+We first fit the model on all folds apart from $\mathcal{I}_\ell$, using $\theta^{-\mathcal{I}_\ell}$ to denote the collection of $\gamma_{itk}$, $\pi_{tk}$, $\mu_{tk}$, and $\Sigma_{tk}$ for all $t \in \mathcal{T} \setminus \mathcal{I}_\ell$, where $\mathcal{T}$ is the set of all time points in our data set. We then use our prediction function $\hat{f}_{pred}(\mathcal{I_\ell}, \theta^{-\mathcal{I}_\ell})$, which takes in all the time points $\mathcal{I}_\ell$ at which we need predictions as well as our fit $\theta^{-\mathcal{I}_\ell}$, and returns the parameters $\mu_{kt},\Sigma_{kt}$, and $\pi_{kt}$ for all time points in $\mathcal{I}_\ell$ using the M-step equations above. 
+
+
+Finally, we evaluate the log-likelihood on these unseen time points $\mathcal{I}_\ell$ using the predicted parameters from $\hat{f}_{pred}(\mathcal{I_\ell}, \theta^{-\mathcal{I}_\ell})$, summing over all points at a given time and then averaging over all time points in $\mathcal{I}_\ell$, to give us a single number for the fold. We then repeat this procedure for the remaining folds and take the average to give us a final cross-validation score for the current set of parameter values:
+
+$$
+\text{CV} = \frac{1}{5}\sum_{\ell=1}^{5} \frac{1}{|\mathcal{I}_\ell|} \sum_{t \in \mathcal{I}_\ell} \sum_{i \in [n_t]} \log\mathcal{L}\left(Y_{it} \mid \hat{f}_{\text{pred}}\left(\mathcal{I}_\ell, \theta^{-\mathcal{I}_\ell}\right)\right)
+$$
+
+
+In our case, we chose to vary $h_{\mu}$ and $h_{\pi}$ over a grid of values, while keeping $h_{\Sigma}$ fixed. Our grid values for $h_{\mu}$ and $h_{\pi}$ vary constantly on a logarithmic scale, starting at 1 and ending at the the total length of time for the data - this end point could be replaced with the first or second quartile of the total length.
+
+For our code, we begin with a function that predicts parameter values outside the set of observed time points using the M-step equations above.
+
+```{r}
+#' @param fit A list returned by `kernel_em` containing the fitted parameters (mu, Sigma, pi, and responsibilities) from the training data.
+#' @param test_dates A vector of POSIXct (or POSIXt) date-time objects of length T_test representing the time points at which predictions are required.
+#' @param train_dates A vector of POSIXct (or POSIXt) date-time objects of length T_train representing the time points corresponding to the training data.
+#' @param train_data A list of length T_train, where each element is a matrix containing the observations for the training set at the corresponding time point.
+#' @param train_biomass A list of length T_train, where each element is a numeric vector of length n_t containing the biomass (or count) for the observations in the training set.
+#' @param hmu Bandwidth parameter for smoothing the mu estimates.
+#' @param hSigma Bandwidth parameter for smoothing the Sigma estimates.
+#' @param hpi Bandwidth parameter for smoothing the pi (mixing proportions) estimates.
+#' @param scale_dates Logical flag indicating whether to rescale the date-time objects. If TRUE, the dates are converted to numeric values and rescaled (by subtracting the minimum training date and dividing by 3600); if FALSE, the dates are used directly. Defaults to TRUE.
+#' @export
+kernel_em_predict <- function(fit, 
+                                test_dates, 
+                                train_dates, 
+                                train_data, 
+                                train_biomass, 
+                                hmu, 
+                                hSigma, 
+                                hpi,
+                                scale_dates = TRUE) {
+  num_test <- length(test_dates)
+  num_train <- length(train_dates)
+  K <- ncol(fit$pi)
+  d <- dim(fit$mu)[3]
+  mu <- array(NA, c(num_test, K, d))
+  Sigma <- array(NA, c(num_test, K, d, d))
+  pi <- matrix(NA, num_test, K)
+  
+  # Convert to numeric
+  numeric_train_dates <- as.numeric(train_dates)
+  numeric_test_dates  <- as.numeric(test_dates)
+  
+  if (scale_dates) {
+    # If we are given real dates, then we do the original rescaling
+    min_date <- min(numeric_train_dates)
+    rescaled_train_dates <- (numeric_train_dates - min_date) / 3600
+    rescaled_test_dates  <- (numeric_test_dates  - min_date) / 3600
+  } else {
+    # If dates are already in hours or integer indices, treat them directly
+    rescaled_train_dates <- numeric_train_dates
+    rescaled_test_dates  <- numeric_test_dates
+  }
+  
+  # 1) Predict pi (mixing proportions) ----------------------------------------
+  # Weighted responsibilities (weights = biomass)
+  resp_weighted <- purrr::map2(train_biomass, fit$resp, ~ .y * .x)
+  # Sum over each mixture component across all observations
+  resp_sum <- purrr::map(resp_weighted, ~ colSums(.x)) %>%
+    unlist() %>%
+    matrix(ncol = K, byrow = TRUE)
+  
+  # Smooth those sums across time
+  resp_sum_smooth <- apply(
+    resp_sum, 2, function(x) 
+      stats::ksmooth(rescaled_train_dates, x, kernel = "normal", bandwidth = hpi,
+                     x.points = rescaled_test_dates)$y
+  )
+  
+  # Normalize to get pi
+  pi <- resp_sum_smooth / rowSums(resp_sum_smooth)
+  
+  # 2) M-step for mu ---------------------------------------------------------
+  # Weighted sum of y's for each mixture component
+  y_sum <- purrr::map2(resp_weighted, train_data, ~ crossprod(.x, .y)) %>% 
+    unlist() %>% 
+    array(c(K, d, num_train)) %>% 
+    aperm(c(3,1,2))
+  
+  # Smooth each dimension across time
+  y_sum_smoothed <- apply(
+    y_sum, 2:3, function(x) 
+      stats::ksmooth(rescaled_train_dates, x, kernel = "normal", bandwidth = hmu,
+                     x.points = rescaled_test_dates)$y
+  )
+  
+  # Smooth the sum of responsibilities (again, but with bandwidth hmu)
+  resp_sum_smooth_mu <- apply(
+    resp_sum, 2, function(x) 
+      stats::ksmooth(rescaled_train_dates, x, kernel = "normal", bandwidth = hmu,
+                     x.points = rescaled_test_dates)$y
+  )
+  
+  # Combine smoothed sums to get mu
+  for (j in seq(d)) {
+    mu[, , j] <- y_sum_smoothed[, , j] / resp_sum_smooth_mu
+  }
+  
+  # 3) M-step for Sigma ------------------------------------------------------
+  mat_sum <- array(NA, c(num_train, K, d, d))
+  for (tt in seq(num_train)) {
+    # Prepare a matrix for each observation's difference from mu
+    yy <- matrix(NA, nrow(train_data[[tt]]), d)
+    for (k_idx in seq(K)) {
+      for (dd in seq(d)) {
+        yy[, dd] <- train_data[[tt]][, dd] - fit$mu[tt, k_idx, dd]
+      }
+      mat_sum[tt, k_idx, , ] <- crossprod(yy, yy * resp_weighted[[tt]][, k_idx])
+    }
+  }
+  
+  # Smooth Sigma the same way
+  mat_sum_smoothed <- apply(
+    mat_sum, 2:4, function(x)
+      stats::ksmooth(rescaled_train_dates, x, kernel = "normal", bandwidth = hSigma,
+                     x.points = rescaled_test_dates)$y
+  )
+  
+  resp_sum_smooth_Sigma <- apply(
+    resp_sum, 2, function(x) 
+      stats::ksmooth(rescaled_train_dates, x, kernel = "normal", bandwidth = hSigma,
+                     x.points = rescaled_test_dates)$y
+  )
+  
+  for (j in seq(d)) {
+    for (l in seq(d)) {
+      Sigma[, , j, l] <- mat_sum_smoothed[, , j, l] / resp_sum_smooth_Sigma
+    }
+  }
+  
+  list(mu = mu, Sigma = Sigma, pi = pi)
+}
+```
+
+We then have a function to compute the log-likelihood:
+
+```{r}
+#' Compute the Average Log-Likelihood for Predicted Parameters
+#'
+#' This function computes the average log-likelihood of the observed data over all time points using the predicted parameters.
+#'
+#' @param y A list of length T, where each element is a matrix of observations at a given time point. Each matrix should have dimensions corresponding to the number of observations at that time point by the data dimension.
+#' @param pred A list containing the predicted parameters from the model. It should include:
+#'   \describe{
+#'     \item{mu}{An array of predicted means with dimensions [T, K, d], where T is the number of time points, K is the number of clusters, and d is the data dimension.}
+#'     \item{Sigma}{An array of predicted covariance matrices with dimensions [T, K, d, d].}
+#'     \item{pi}{A matrix of predicted mixing proportions with dimensions [T, K].}
+#'   }
+#'
+#' @return A numeric value representing the average log-likelihood over all time points.
+#' @export
+compute_log_like <- function(y, pred) {
+  d <- ncol(y[[1]])  # Dimension of the data
+  ntimes <- length(y)  # Number of time points
+  K <- dim(pred$pi)[2]  # Number of clusters
+  log_like <- numeric(ntimes)
+  for (tt in seq(ntimes)) {
+    likelihood_tt <- 0
+    for (k in seq(K)) {
+      if (d == 1) {
+        # Univariate case
+        likelihood_k <- stats::dnorm(y[[tt]], mean = pred$mu[tt, k, 1], 
+                                     sd = sqrt(pred$Sigma[tt, k, 1, 1]))
+      } else {
+        # Multivariate case
+        likelihood_k <- mvtnorm::dmvnorm(y[[tt]], mean = pred$mu[tt, k, ], 
+                                         sigma = pred$Sigma[tt, k, , ])
+      }
+      # Weighted likelihood with mixing proportions
+      likelihood_tt <- likelihood_tt + pred$pi[tt, k] * likelihood_k
+    }
+    log_like[tt] <- sum(log(likelihood_tt))
+  }
+  
+  return(mean(log_like))
+}
+```
+
+We have a small function to help ensure objects remain as matrices:
+
+```{r}
+#' Ensure an Object is a Matrix
+#'
+#' This helper function checks whether the provided object is a matrix and, if it is not, converts it to a matrix using \code{as.matrix()}.
+#'
+#' @param x An object that is expected to be a matrix. If \code{x} is not already a matrix, it will be coerced into one.
+#'
+#' @return A matrix. If the input was not a matrix, it is converted using \code{as.matrix()}.
+#'
+#' @examples
+#' # Example 1: x is a vector
+#' vec <- c(1, 2, 3)
+#' mat <- ensure_matrix(vec)
+#' is.matrix(mat)  # Should return TRUE
+#'
+#' # Example 2: x is already a matrix
+#' mat2 <- matrix(1:4, nrow = 2)
+#' identical(ensure_matrix(mat2), mat2)  # Should return TRUE
+#'
+#' @export
+ensure_matrix <- function(x) {
+  if (!is.matrix(x)) x <- as.matrix(x)
+  return(x)
+}
+```
+
+And now we have the function that computes the cross-validation score given a certain set of bandwidths:
+
+```{r}
+#' Cross-Validated Log-Likelihood for Kernel EM Model
+#'
+#' This function performs K-fold cross-validation (by default, 5-fold) for selecting the bandwidth parameters in a kernel-based EM model. The data is partitioned into folds by leaving out every \code{leave_out_every}-th time point, where the \eqn{\ell}-th fold is given by 
+#' \deqn{\mathcal{I}_\ell = \{\ell, \ell+ \text{leave_out_every}, \ell+2 \times \text{leave_out_every}, \dots\}.}
+#' For each fold, the model is fit on the remaining time points using \code{kernel_em} and predictions for the left-out points are generated using \code{kernel_em_predict}. The log-likelihood of the left-out data is computed using \code{compute_log_like}, and the final cross-validation score is the average log-likelihood over all folds.
+#'
+#' @param y A list of length T, where each element is a matrix of observations at a given time point.
+#' @param K Number of mixture components (clusters) in the model.
+#' @param dates A vector of date-time objects (e.g., of class \code{POSIXct}) of length T corresponding to the time points in \code{y}.
+#' @param hmu Bandwidth parameter for smoothing the \code{mu} (mean) estimates.
+#' @param hSigma Bandwidth parameter for smoothing the \code{Sigma} (covariance) estimates.
+#' @param hpi Bandwidth parameter for smoothing the \code{pi} (mixing proportions) estimates.
+#' @param biomass A list of length T, where each element is a numeric vector of length \eqn{n_t} containing the biomass (or count) of particles for the observations at that time point.
+#' @param leave_out_every The number of folds for cross-validation (default is 5). The \eqn{\ell}-th fold is defined as the set of time points \eqn{\{\ell, \ell + \text{leave_out_every}, \ell + 2 \times \text{leave_out_every}, \dots\}}.
+#' @param scale_dates Logical flag indicating whether to rescale the date-time objects. If \code{TRUE}, the dates are converted to numeric values (by subtracting the minimum date and dividing by 3600) before smoothing; if \code{FALSE}, the dates are used directly.
+#'
+#' @return A numeric value representing the average log-likelihood over all cross-validation folds.
+#'
+#' @details For each fold, the model is fit using the training data (all time points not in the current fold) and then predictions are made for the left-out time points. The log-likelihood for each fold is computed by summing the log-likelihoods over all observations and then averaging over the time points in the fold. The overall cross-validation score is obtained by averaging the log-likelihoods over all folds.
+#' @export
+kernel_em_cv <- function(y, 
+                         K, 
+                         dates, 
+                         hmu, 
+                         hSigma, 
+                         hpi, 
+                         biomass, 
+                         leave_out_every = 5,
+                         scale_dates = TRUE) 
+{
+  n <- length(y)
+  if (leave_out_every <= 0 || leave_out_every >= n) {
+    stop("leave_out_every must be a positive integer smaller than the number of data points")
+  }
+  
+  pred <- vector("list", leave_out_every)
+  log_like <- vector("list", leave_out_every)
+  
+  for (i in seq_len(leave_out_every)) {
+    test_indices <- seq(i, n, by = leave_out_every)
+    train_data   <- lapply(y[-test_indices], ensure_matrix)
+    train_date   <- dates[-test_indices]
+    train_biomass <- biomass[-test_indices]
+    test_data    <- lapply(y[test_indices], ensure_matrix)
+    test_date    <- dates[test_indices]
+    test_biomass <- biomass[test_indices]
+    
+    if (scale_dates){
+      fit_train <- kernel_em(y      = train_data,
+                             K      = K,
+                             hmu    = hmu,
+                             hSigma = hSigma,
+                             hpi    = hpi,
+                             dates  = train_date,
+                             biomass = train_biomass)
+    } else {
+      fit_train <- kernel_em(y      = train_data,
+                             K      = K,
+                             hmu    = hmu,
+                             hSigma = hSigma,
+                             hpi    = hpi,
+                             biomass = train_biomass)
+    }
+    
+    pred[[i]] <- kernel_em_predict(fit           = fit_train,
+                                   test_dates    = test_date,
+                                   train_dates   = train_date,
+                                   train_data    = train_data,
+                                   train_biomass = train_biomass,
+                                   hmu           = hmu,
+                                   hSigma        = hSigma,
+                                   hpi           = hpi,
+                                   scale_dates   = scale_dates)
+    
+    log_like[[i]] <- compute_log_like(test_data, pred[[i]])
+  }
+  
+  avg_log_likelihood <- mean(unlist(log_like))
+  return(avg_log_likelihood)
+}
+```
+
+Finally, we have the function that performs cross validation over a grid of parameter values, where $h_{\mu}$ and $h_{\pi}$ vary, and $h_{\Sigma}$ is a fixed value.
+
+```{r}
+#' Grid Search Cross-Validation for Kernel EM Model
+#'
+#' This function performs a grid search over bandwidth parameters for the kernel-based EM model via cross-validation.
+#' The grid search is performed over the \code{hmu} (for the mean parameter) and \code{hpi} (for the mixing proportions)
+#' while keeping \code{hSigma} fixed. Cross-validation is implemented by partitioning the data into folds by leaving out every
+#' \code{leave_out_every}-th time point. For each parameter combination, the model is fit on the training data and evaluated
+#' on the left-out data using the log-likelihood. The best parameters are selected as those that maximize the cross-validation score.
+#'
+#' @param y A list of length T, where each element is a matrix of observations at a given time point.
+#' @param K Number of mixture components (clusters) in the model.
+#' @param hSigma Bandwidth parameter for smoothing the \code{Sigma} (covariance) estimates.
+#' @param dates A vector of date-time objects (e.g., of class \code{POSIXct}) of length T corresponding to the time points in \code{y}.
+#'   If \code{NULL}, the function uses the sequence of indices.
+#' @param biomass A list of length T, where each element is a numeric vector of length \eqn{n_t} containing the biomass (or count)
+#'   for the observations at that time point. Defaults to \code{default_biomass(y)}.
+#' @param leave_out_every The number of folds for cross-validation (default is 5). The \eqn{\ell}-th fold is defined as the set of
+#'   time points \eqn{\{\ell, \ell + \text{leave_out_every}, \ell + 2 \times \text{leave_out_every}, \dots\}}.
+#' @param grid_size The number of grid points to evaluate for the bandwidth parameters.
+#' @param ncores Number of cores to use for parallel processing. If \code{NULL} or less than 2, the grid search is performed sequentially.
+#' @param log_grid Logical flag indicating whether the grid for the bandwidth parameters should be logarithmically spaced (if \code{TRUE})
+#'   or linearly spaced (if \code{FALSE}). Defaults to \code{TRUE}.
+#' @param grid_length_half Logical flag indicating whether to use half the total time length (or median time) for computing the end of the grid.
+#'
+#' @return A list containing:
+#'   \describe{
+#'     \item{results}{A data frame (converted from a matrix) of cross-validation scores, with row names corresponding to evaluated \code{hmu} values
+#'     and column names to evaluated \code{hpi} values.}
+#'     \item{best_hmu}{The best \code{hmu} value (bandwidth for smoothing \code{mu}) according to the highest CV score.}
+#'     \item{best_hpi}{The best \code{hpi} value (bandwidth for smoothing \code{pi}) according to the highest CV score.}
+#'     \item{max_cv_score}{The highest cross-validation score observed.}
+#'     \item{hmu_vals}{The vector of \code{hmu} values that were evaluated.}
+#'     \item{hpi_vals}{The vector of \code{hpi} values that were evaluated.}
+#'     \item{time_elapsed}{The total time elapsed (in seconds) during the grid search.}
+#'   }
+#'
+#' @details The function first determines whether the dates should be scaled based on whether \code{dates} is provided.
+#'   A grid of bandwidth values is then constructed (either logarithmically or linearly spaced) from the calculated range.
+#'   Cross-validation is performed for each parameter combination via the \code{kernel_em_cv} function. The grid search can be run
+#'   either sequentially or in parallel, depending on the value of \code{ncores}.
+#'
+#' @export
+cv_grid_search <- function(y, 
+                                        K, 
+                                        hSigma = 10, 
+                                        dates = NULL, 
+                                        biomass = default_biomass(y), 
+                                        leave_out_every = 5, 
+                                        grid_size = 10,
+                                        ncores = NULL,
+                                        log_grid = TRUE,
+                                        grid_length_half = TRUE) {
+  start_time <- Sys.time()
+  
+  # Decide if we are scaling dates or not
+  if (is.null(dates)) {
+    numeric_dates <- seq_along(y)
+    scale_dates <- FALSE
+    starting_date <- min(numeric_dates)
+    middle_date   <- stats::median(numeric_dates)
+    
+    if (grid_length_half) {
+      end_cv <- middle_date - starting_date
+    } else {
+      end_cv <- max(numeric_dates) - starting_date
+    }
+  } else {
+    numeric_dates <- as.numeric(dates)
+    scale_dates   <- TRUE
+    starting_date <- min(numeric_dates)
+    middle_date   <- stats::median(numeric_dates)
+    
+    if (grid_length_half) {
+      end_cv <- (middle_date - starting_date) / 3600
+    } else {
+      end_cv <- (max(numeric_dates) - starting_date) / 3600
+    }
+  }
+
+  if (log_grid) {
+    # LOG-SPACED GRID
+    h_values <- exp(seq(log(end_cv), log(2), length = grid_size))
+  } else {
+    # LINEARLY-SPACED GRID
+    h_values <- seq(end_cv, 2, length.out = grid_size)
+  }
+  
+  h_values <- round(h_values)
+  h_values <- unique(h_values)
+  h_values <- h_values[h_values > 0]
+  
+  hmu_vals <- h_values
+  hpi_vals <- h_values
+  
+  # Create a data frame of all parameter combinations
+  param_grid <- expand.grid(hmu = hmu_vals, hpi = hpi_vals)
+  
+  # Decide whether to run in parallel or sequentially
+  if (is.null(ncores) || as.numeric(ncores) < 2) {
+    message("Running sequentially...")
+    
+    # Prepare an empty data frame to store results
+    cv_scores <- data.frame(hmu = numeric(0), hpi = numeric(0), cv_score = numeric(0))
+    total <- nrow(param_grid)
+    
+    for (i in seq_len(nrow(param_grid))) {
+      hmu <- param_grid$hmu[i]
+      hpi <- param_grid$hpi[i]
+      processed <- i
+      remaining <- total - i
+      
+      # Print detailed progress information
+      message("Evaluating parameter combination ", processed, " of ", total, 
+              ": hmu = ", hmu, ", hpi = ", hpi, ". Remaining: ", remaining)
+      
+      cv_score <- kernel_em_cv(
+        y             = y,
+        K             = K,
+        dates         = numeric_dates,
+        hmu           = hmu,
+        hSigma        = hSigma,
+        hpi           = hpi,
+        biomass       = biomass,
+        leave_out_every = leave_out_every,
+        scale_dates   = scale_dates
+      )
+      
+      cv_scores <- rbind(cv_scores, data.frame(hmu = hmu, hpi = hpi, cv_score = cv_score))
+    }
+    
+  } else {
+    message("Running in parallel on ", ncores, " cores...")
+    
+    cl <- parallel::makeCluster(as.integer(ncores))
+    doParallel::registerDoParallel(cl)
+    
+    # Export needed variables/functions
+    parallel::clusterExport(
+      cl, 
+      varlist = c("kernel_em_cv", "ensure_matrix", "kernel_em", "kernel_em_predict",
+                  "kernel_em_predict", "calculate_responsibilities", 
+                  "compute_log_like", "y", "K", "hSigma", "biomass", 
+                  "leave_out_every", "numeric_dates", "scale_dates"),
+      envir = environment()
+    )
+    
+    # Load required packages on the workers
+    parallel::clusterEvalQ(cl, {
+      library(flowkernel) 
+    })
+    
+    cv_scores <- foreach::foreach(i = seq_len(nrow(param_grid)), .combine = rbind) %dopar% {
+      hmu <- param_grid$hmu[i]
+      hpi <- param_grid$hpi[i]
+      
+      cv_score <- kernel_em_cv(
+        y             = y,
+        K             = K,
+        dates         = numeric_dates,
+        hmu           = hmu,
+        hSigma        = hSigma,
+        hpi           = hpi,
+        biomass       = biomass,
+        leave_out_every = leave_out_every,
+        scale_dates   = scale_dates
+      )
+      
+      data.frame(hmu = hmu, hpi = hpi, cv_score = cv_score)
+    }
+    
+    parallel::stopCluster(cl)
+  }
+  
+  # Convert cv_scores to matrix form
+  if (nrow(cv_scores) == 0) {
+    stop("No cross-validation scores were computed.")
+  }
+  
+  results <- reshape2::acast(cv_scores, hmu ~ hpi, value.var = "cv_score")
+  results_df <- as.data.frame(results)
+  
+  # Re-label columns and rows for clarity
+  colnames(results_df) <- paste0("hpi_", colnames(results_df))
+  rownames(results_df) <- paste0("hmu_", rownames(results_df))
+  
+  # Identify best hmu/hpi
+  max_pos  <- which(results == max(results, na.rm = TRUE), arr.ind = TRUE)
+  best_hmu <- as.numeric(rownames(results)[max_pos[1]])
+  best_hpi <- as.numeric(colnames(results)[max_pos[2]])
+  
+  # Timing
+  end_time  <- Sys.time()
+  run_time  <- as.numeric(difftime(end_time, start_time, units = "secs"))
+  hours     <- floor(run_time / 3600)
+  minutes   <- floor((run_time %% 3600) / 60)
+  seconds   <- round(run_time %% 60)
+  
+  cat("Best hmu:", best_hmu, 
+      "\nBest hpi:", best_hpi, 
+      "\nHighest CV score:", max(results, na.rm = TRUE), 
+      "\nTime Elapsed:", run_time, "seconds =>",
+      hours, "hours", minutes, "minutes", seconds, "seconds\n")
+  
+  results_list <- list(
+    results      = results_df,
+    best_hmu     = best_hmu,
+    best_hpi     = best_hpi,
+    max_cv_score = max(results, na.rm = TRUE),
+    hmu_vals = hmu_vals,
+    hpi_vals = hpi_vals,
+    time_elapsed = run_time
+  )
+  return(results_list)
+}
+```
+
+Let's add the packages we used to make CV run in parallel:
+
+```{r}
+usethis::use_package("foreach")
+usethis::use_package("doParallel")
+usethis::use_package("parallel")
+
+```
+
+
+Let us try running this on our example data, using sequential processing. To run in parallel, we would choose a value of `ncores` greater than 1.
+
+```{r}
+ex1_cv_log_grid_results <- cv_grid_search(y = ex1$dat$y, K = 2, hSigma = 10, biomass = ex1$dat$biomass,
+                                          leave_out_every = 5, grid_size = 10, ncores = 1)
+```
+
+
+We can examine the cross-validation scores for each set of parameter values by calling the following:
+```{r, message = FALSE}
+ex1_cv_log_grid_results$results
+```
+
+Note that all the scores are negative because they are log-likelihoods. The higher the score (and so the less negative), the better. Let's add a function to plot these CV results:
+
+
+```{r, echo = FALSE}
+usethis::use_package("plotly")
+```
+
+```{r}
+#' Plot Cross-Validation Results
+#'
+#' This function generates an interactive 3D scatter plot of cross-validation results using Plotly.
+#' It accepts a results list returned by \code{cv_grid_search} and visualizes the grid of cross-validation
+#' scores along with the evaluated bandwidth values (\code{hmu} and \code{hpi}).
+#'
+#' @param results_list A list returned by \code{cv_grid_search}. This list should include:
+#'   \describe{
+#'     \item{results}{A data frame of cross-validation scores, where the row names correspond to evaluated \code{hmu} values and the column names to evaluated \code{hpi} values.}
+#'     \item{hmu_vals}{A numeric vector of the \code{hmu} bandwidth values that were evaluated.}
+#'     \item{hpi_vals}{A numeric vector of the \code{hpi} bandwidth values that were evaluated.}
+#'   }
+#'
+#' @return A Plotly object representing a 3D scatter plot with:
+#'   \describe{
+#'     \item{x-axis}{Evaluated \code{hmu} bandwidth values.}
+#'     \item{y-axis}{Evaluated \code{hpi} bandwidth values.}
+#'     \item{z-axis}{Corresponding cross-validation scores.}
+#'   }
+#' @export
+plot_cv_results <- function(results_list) {
+  # Extract the matrix of results
+  results_df <- results_list$results
+  hmu_vals   <- results_list$hmu_vals
+  hpi_vals   <- results_list$hpi_vals
+  
+  # Flatten in row-major order by first transposing, then c(...)
+  cv_scores <- c(t(as.matrix(results_df)))
+  
+  # Build a data frame that enumerates (hmu, hpi) in row-major order
+  df <- expand.grid(hmu = hmu_vals, hpi = hpi_vals)
+  df$cv_score <- cv_scores
+  
+  # Create a 3D scatter plot
+  fig <- plotly::plot_ly(
+    data = df,
+    x = ~hmu,
+    y = ~hpi,
+    z = ~cv_score,
+    type = "scatter3d",
+    mode = "markers"
+  ) %>%
+    plotly::layout(
+      title = "Cross-Validation Results",
+      scene = list(
+        xaxis = list(title = "hmu"),
+        yaxis = list(title = "hpi"),
+        zaxis = list(title = "CV Score")
+      ),
+      margin = list(l = 0, r = 0, b = 0, t = 50)
+    )
+  
+  return(fig)
+}
+```
+
+Let's take a look at the plot:
+```{r}
+fig <- plot_cv_results(ex1_cv_log_grid_results)
+fig
+```
 

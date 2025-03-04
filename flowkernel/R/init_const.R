@@ -13,24 +13,24 @@ init_const <- function (y, K, times_to_sample = 50, points_to_sample = 50){
   mu <- array(NA, c(num_times, K, d))
   Sigma <- array(NA, c(num_times, K, d, d))
   pi <- matrix(NA, num_times, K)
-  
-  # subsample data:
-  times_to_sample <- sample(num_times, times_to_sample, replace=TRUE)
-  if (d == 1) {
-    sample_data <- y[times_to_sample] %>%
-      purrr::map(~ .x[sample(nrow(.x), points_to_sample, replace=TRUE)]) %>% 
-      unlist()
-  }
-  else {
-    sample_data <- y[times_to_sample] %>%
-      purrr::map(~ t(.x[sample(nrow(.x), points_to_sample, replace=TRUE), ])) %>% 
-      unlist() %>% 
-      matrix(ncol = d, byrow = TRUE)
-  }
-  
   # Repeatedly call Mclust until it gives a non-NULL fit:
   init_fit <- NULL
   while (is.null(init_fit)) {
+    # subsample data:
+    times_to_sample <- sample(num_times, times_to_sample, replace=TRUE)
+    if (d == 1) {
+      sample_data <- y[times_to_sample] %>%
+        purrr::map(~ .x[sample(nrow(.x), points_to_sample, replace=TRUE)]) %>% 
+        unlist()
+    }
+    else {
+      sample_data <- y[times_to_sample] %>%
+        purrr::map(~ t(.x[sample(nrow(.x), points_to_sample, replace=TRUE), ])) %>% 
+        unlist() %>% 
+        matrix(ncol = d, byrow = TRUE)
+    }
+    
+    
     if (d == 1) {
       init_fit <- mclust::Mclust(sample_data, G = K, modelNames = "V")
       for (tt in seq(num_times)) {
@@ -40,10 +40,12 @@ init_const <- function (y, K, times_to_sample = 50, points_to_sample = 50){
       }
     } else if (d > 1) {
       init_fit <- mclust::Mclust(sample_data, G = K, modelNames = "VVV")
-      for (tt in seq(num_times)) {
-        mu[tt, ,] <- t(init_fit$parameters$mean)
-        pi[tt, ] <- init_fit$parameters$pro
-        Sigma[tt, , , ] <- aperm(init_fit$parameters$variance$sigma, c(3,1,2))
+      if (is.matrix(init_fit$parameters$mean)){
+        for (tt in seq(num_times)) {
+          mu[tt, ,] <- t(init_fit$parameters$mean)
+          pi[tt, ] <- init_fit$parameters$pro
+          Sigma[tt, , , ] <- aperm(init_fit$parameters$variance$sigma, c(3,1,2))
+        }
       }
     }
   }

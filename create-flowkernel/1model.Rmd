@@ -45,11 +45,13 @@ It will be useful to have data generated from this model for testing purposes, s
 #' of probabilities
 #' @param num_points a T vector of integers giving the number of points n_t to
 #' generate at each time point t.
+#' @param start_date the starting date for the generated data. This is created for when running a test requires dates.
 #' @export
 generate_smooth_gauss_mix <- function(mu_function,
                                       Sigma_function,
                                       pi_function,
-                                      num_points) {
+                                      num_points,
+                                      start_date = "2017-05-28 21:00:00 UTC") {
   times <- seq_along(num_points)
   mu <- mu_function(times)
   Sigma <- Sigma_function(times)
@@ -64,21 +66,26 @@ generate_smooth_gauss_mix <- function(mu_function,
   for (t in times) {
     z[[t]] <- apply(stats::rmultinom(num_points[t], 1, pi[t, ]) == 1, 2, which)
     y[[t]] <- matrix(NA, num_points[t], d)
-    biomass[[t]] <- abs(rnorm(num_points[t], mean = 0.01, sd = sqrt(0.001)))
+    biomass[[t]] <- abs(stats::rnorm(num_points[t], mean = 0.01, sd = sqrt(0.001)))
     for (k in 1:K) {
       ii <- z[[t]] == k # index of points in component k at time t
       if (sum(ii) == 0) next
       if (d == 1)
         y[[t]][ii, ] <- stats::rnorm(n = sum(ii),
-                                                   mean = mu[t, k, ],
-                                                   sd = Sigma[t, k, , ])
+                                     mean = mu[t, k, ],
+                                     sd = Sigma[t, k, , ])
       else
         y[[t]][ii, ] <- mvtnorm::rmvnorm(n = sum(ii),
-                                                       mean = mu[t, k, ],
-                                                       sigma = Sigma[t, k, , ])
+                                         mean = mu[t, k, ],
+                                         sigma = Sigma[t, k, , ])
     }
   }
-  list(y = y, z = z, mu = mu, Sigma = Sigma, pi = pi, biomass = biomass)
+  
+  # Generate dates spaced 1 hour apart
+  start_time <- as.POSIXct(start_date, tz = "UTC")
+  dates <- seq(start_time, by = "hour", length.out = length(y))
+  
+  list(y = y, z = z, mu = mu, Sigma = Sigma, pi = pi, biomass = biomass, dates = dates)
 }
 ```
 
