@@ -11,7 +11,7 @@ cv_grid_search(
   dates = NULL,
   biomass = default_biomass(y),
   leave_out_every = 5,
-  grid_size = 10,
+  grid_size = 7,
   ncores = NULL,
   log_grid = TRUE,
   grid_length_half = TRUE
@@ -33,7 +33,7 @@ for the observations at that time point. Defaults to \code{default_biomass(y)}.}
 \item{leave_out_every}{The number of folds for cross-validation (default is 5). The \eqn{\ell}-th fold is defined as the set of
 time points \eqn{\{\ell, \ell + \text{leave_out_every}, \ell + 2 \times \text{leave_out_every}, \dots\}}.}
 
-\item{grid_size}{The number of grid points to evaluate for the bandwidth parameters.}
+\item{grid_size}{Number of grid points for each bandwidth parameter, resulting in a x grid. Defaults to 7}
 
 \item{ncores}{Number of cores to use for parallel processing. If \code{NULL} or less than 2, the grid search is performed sequentially.}
 

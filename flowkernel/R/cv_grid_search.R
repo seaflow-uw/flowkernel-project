@@ -17,7 +17,7 @@
 #'   for the observations at that time point. Defaults to \code{default_biomass(y)}.
 #' @param leave_out_every The number of folds for cross-validation (default is 5). The \eqn{\ell}-th fold is defined as the set of
 #'   time points \eqn{\{\ell, \ell + \text{leave_out_every}, \ell + 2 \times \text{leave_out_every}, \dots\}}.
-#' @param grid_size The number of grid points to evaluate for the bandwidth parameters.
+#' @param grid_size Number of grid points for each bandwidth parameter, resulting in a x grid. Defaults to 7
 #' @param ncores Number of cores to use for parallel processing. If \code{NULL} or less than 2, the grid search is performed sequentially.
 #' @param log_grid Logical flag indicating whether the grid for the bandwidth parameters should be logarithmically spaced (if \code{TRUE})
 #'   or linearly spaced (if \code{FALSE}). Defaults to \code{TRUE}.
@@ -47,7 +47,7 @@ cv_grid_search <- function(y,
                                         dates = NULL, 
                                         biomass = default_biomass(y), 
                                         leave_out_every = 5, 
-                                        grid_size = 10,
+                                        grid_size = 7,
                                         ncores = NULL,
                                         log_grid = TRUE,
                                         grid_length_half = TRUE) {

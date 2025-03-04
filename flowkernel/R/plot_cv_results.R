@@ -21,20 +21,34 @@
 #'   }
 #' @export
 plot_cv_results <- function(results_list) {
-  # Extract the matrix of results
+  # Pull out the results
   results_df <- results_list$results
-  hmu_vals   <- results_list$hmu_vals
-  hpi_vals   <- results_list$hpi_vals
   
-  # Flatten in row-major order by first transposing, then c(...)
-  cv_scores <- c(t(as.matrix(results_df)))
+  # Convert row/column names from strings ("hmu_99") to numeric (99)
+  row_nums <- as.numeric(sub("hmu_", "", rownames(results_df)))
+  col_nums <- as.numeric(sub("hpi_", "", colnames(results_df)))
   
-  # Build a data frame that enumerates (hmu, hpi) in row-major order
-  df <- expand.grid(hmu = hmu_vals, hpi = hpi_vals)
+  # Sort the numeric row and column names
+  row_sorted <- sort(row_nums)
+  col_sorted <- sort(col_nums)
+  
+  # Create a new, reordered matrix
+  # match() finds the indices of row_nums that correspond to row_sorted, etc.
+  row_order <- match(row_sorted, row_nums)
+  col_order <- match(col_sorted, col_nums)
+  
+  # Reorder results_df so row i truly corresponds to row_sorted[i], etc.
+  results_mat <- as.matrix(results_df[row_order, col_order])
+  
+  # Flatten in column-major order
+  cv_scores <- c(results_mat)
+  
+  # Build a data frame matching the sorted bandwidths to their CV scores
+  df <- expand.grid(hmu = row_sorted, hpi = col_sorted)
   df$cv_score <- cv_scores
   
-  # Create a 3D scatter plot
-  fig <- plotly::plot_ly(
+  # Plot in 3D
+  plotly::plot_ly(
     data = df,
     x = ~hmu,
     y = ~hpi,
@@ -48,9 +62,6 @@ plot_cv_results <- function(results_list) {
         xaxis = list(title = "hmu"),
         yaxis = list(title = "hpi"),
         zaxis = list(title = "CV Score")
-      ),
-      margin = list(l = 0, r = 0, b = 0, t = 50)
+      )
     )
-  
-  return(fig)
 }
