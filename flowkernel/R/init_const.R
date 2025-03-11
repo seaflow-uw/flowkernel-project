@@ -17,14 +17,14 @@ init_const <- function (y, K, times_to_sample = 50, points_to_sample = 50){
   init_fit <- NULL
   while (is.null(init_fit)) {
     # subsample data:
-    times_to_sample <- sample(num_times, times_to_sample, replace=TRUE)
+    sampled_times <- sample(num_times, times_to_sample, replace=TRUE)
     if (d == 1) {
-      sample_data <- y[times_to_sample] %>%
+      sample_data <- y[sampled_times] %>%
         purrr::map(~ .x[sample(nrow(.x), points_to_sample, replace=TRUE)]) %>% 
         unlist()
     }
     else {
-      sample_data <- y[times_to_sample] %>%
+      sample_data <- y[sampled_times] %>%
         purrr::map(~ t(.x[sample(nrow(.x), points_to_sample, replace=TRUE), ])) %>% 
         unlist() %>% 
         matrix(ncol = d, byrow = TRUE)
